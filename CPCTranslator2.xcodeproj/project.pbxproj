@@ -28,6 +28,7 @@
 		9D5CFAED2AC5F5AF0063390E /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		9D5CFAF52AC5F5E50063390E /* MicrosoftCognitiveServicesSpeech.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = MicrosoftCognitiveServicesSpeech.xcframework; sourceTree = "<group>"; };
 		9D5CFAF72AC5F6E60063390E /* CPCTranslator2.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CPCTranslator2.entitlements; sourceTree = "<group>"; };
+		9D5CFAF82AC95D170063390E /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -45,6 +46,7 @@
 		9D5CFAE12AC5F5AF0063390E = {
 			isa = PBXGroup;
 			children = (
+				9D5CFAF82AC95D170063390E /* README.md */,
 				9D5CFAF42AC5F5B90063390E /* Frameworks */,
 				9D5CFAEC2AC5F5AF0063390E /* CPCTranslator2 */,
 				9D5CFAEB2AC5F5AF0063390E /* Products */,
