@@ -26,6 +26,97 @@ extension AVAudioPCMBuffer {
     }
 }
 
+struct TokenResponse : Codable {
+    var token_type: String
+    var expires_in: Int
+    var ext_expires_in: Int
+    var access_token: String
+}
+
+struct TranslationRequest : Codable {
+    var data: String
+}
+
+struct CPCTranslator2Configuration : Codable {
+    var subscription: String
+    var region: String
+    var jwtClientSecret: String
+    var jwtAudience: String
+    var jwtClientId: String
+    var jwtTenantId: String
+    var serverUrl: String
+    var useTestOutput: Bool
+}
+
+class ConfigurationManager {
+    func loadConfiguration() -> CPCTranslator2Configuration {
+        var applicationSupportPath = "."
+        let paths = NSSearchPathForDirectoriesInDomains(FileManager.SearchPathDirectory.applicationSupportDirectory, FileManager.SearchPathDomainMask.userDomainMask, true)
+        
+        if !paths.isEmpty {
+            applicationSupportPath = paths.first!
+        }
+        
+        let configJson = try! String(contentsOfFile: "\(applicationSupportPath)/CPCTranslator2/config.json", encoding: .utf8)
+        
+        return try! JSONDecoder().decode(CPCTranslator2Configuration.self, from: configJson.data(using: .utf8)!)
+    }
+}
+
+class ApiClient {
+    private var _accessToken: String?
+    private let _configuration: CPCTranslator2Configuration
+    
+    init(config: CPCTranslator2Configuration) {
+        _accessToken = nil
+        _configuration = config
+    }
+    func getToken() async -> String {
+        if _accessToken == nil {
+            let secret = _configuration.jwtClientSecret
+            let audience = _configuration.jwtAudience
+            let clientId = _configuration.jwtClientId
+            let grantType = "client_credentials"
+            let tenantId = _configuration.jwtTenantId
+            let endpoint = URL(string: "https://login.microsoftonline.com/\(tenantId)/oauth2/v2.0/token")!
+            
+            var request = URLRequest(url: endpoint)
+            
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpMethod = "POST"
+            request.httpBody = "client_id=\(clientId)&scope=\(audience)%2F.default&client_secret=\(secret)&grant_type=\(grantType)".data(using: .utf8)!
+            
+            let session = URLSession.shared
+            
+            let (data, _) = try! await session.data(for: request)
+            
+            let decoder = JSONDecoder()
+            let decoded_response = try! decoder.decode(TokenResponse.self, from: data)
+            
+            _accessToken = decoded_response.access_token
+        }
+        
+        return _accessToken!
+    }
+    
+    func sendTranslationData(translationData: String) async {
+        let token = await getToken()
+        let body = TranslationRequest(data: translationData)
+        let url = URL(string: "\(_configuration.serverUrl)/translation")!
+        var request = URLRequest(url: url)
+        
+        request.httpMethod = "POST"
+        request.httpBody = try! JSONEncoder().encode(body)
+        
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        let session = URLSession.shared
+        
+        let (_, _) = try! await session.data(for: request)
+    }
+}
+
 class AudioEngine {
     private let _engine: AVAudioEngine
     private var _conversionQueue: DispatchQueue
@@ -34,6 +125,7 @@ class AudioEngine {
     private let _destinationStream: SPXPushAudioInputStream
     private let _sampleRate: Double
     private let _bufferSize: AVAudioFrameCount
+    //private let _outfile: AVAudioFile
     
     init(destinationStream: SPXPushAudioInputStream) {
         _engine = AVAudioEngine()
@@ -44,7 +136,10 @@ class AudioEngine {
         _formatConverter = AVAudioConverter(from: _engine.inputNode.outputFormat(forBus: 0), to: _recordingFormat)!
         _destinationStream = destinationStream
         
-        _engine.inputNode.installTap(onBus: 0, bufferSize: _bufferSize, format: _engine.inputNode.inputFormat(forBus: 0), block: processAudioBuffer)
+        //print("inputNode: \(_engine.inputNode.outputFormat(forBus: 0).sampleRate)")
+//        _outfile = try! AVAudioFile(forWriting: URL(fileURLWithPath: "/Users/nfm/recording.caf"), settings: _engine.inputNode.inputFormat(forBus: 0).settings, commonFormat: _recordingFormat.commonFormat, interleaved: false)
+        
+        _engine.inputNode.installTap(onBus: 0, bufferSize: _bufferSize, format: _engine.inputNode.outputFormat(forBus: 0), block: processAudioBuffer)
         
         let player = AVAudioPlayerNode()
         _engine.attach(player)
@@ -55,7 +150,7 @@ class AudioEngine {
     
     func processAudioBuffer(buffer: AVAudioPCMBuffer, time: AVAudioTime) {
         _conversionQueue.async {
-            let outputBufferCapacity = AVAudioFrameCount(buffer.frameCapacity)
+            let outputBufferCapacity = AVAudioFrameCount(buffer.duration * self._recordingFormat.sampleRate)
 
             guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: self._recordingFormat, frameCapacity: outputBufferCapacity) else {
                 print("Failed to create new pcm buffer")
@@ -84,6 +179,7 @@ class AudioEngine {
     func start() {
         do {
             try _engine.start()
+            
         } catch {
             print(error.localizedDescription)
         }
@@ -96,13 +192,14 @@ class AudioEngine {
 }
 
 class SpeechTranslator {
-    private let _sub: String
-    private let _region: String
     private var _translationConfig: SPXSpeechTranslationConfiguration
     private var _pushStream: SPXPushAudioInputStream
     private var _audioConfig: SPXAudioConfiguration
     private var _recognizer: SPXTranslationRecognizer
+    private var _publishingQueue: DispatchQueue
+    private let _configuration: CPCTranslator2Configuration
     private let _audioEngine: AudioEngine
+    private let _apiClient: ApiClient
     
     func handleSessionStarted(recognizer: SPXRecognizer, evt: SPXSessionEventArgs) {
         print("Session Started")
@@ -123,19 +220,27 @@ class SpeechTranslator {
     func handleRecognized(recognizer: SPXRecognizer, evt: SPXTranslationRecognitionEventArgs) {
         if evt.result.reason == SPXResultReason.translatedSpeech {
             for translation in evt.result.translations {
-                print("TRANSLATED [\(translation.key)]: \(translation.value)")
-            }
+                    print("TRANSLATED: \(translation.value)")
+                }
+//                print("TRANSLATED [\(translation.key)]: \(translation.value)")
+//
+//                _publishingQueue.async {
+//                    Task {
+//                        await self._apiClient.sendTranslationData(translationData: "\(translation.value)")
+//                    }
+//                }
+            
         }
         else if evt.result.reason == SPXResultReason.noMatch {
             let reason = try! SPXNoMatchDetails(fromNoMatch: evt.result)
             
-            print("NOMATCH: Reason=\(reason.reason)")
+            print("Unknown")
         }
     }
     
     func handleCanceled(recognizer: SPXRecognizer, evt: SPXTranslationRecognitionCanceledEventArgs) {
         print("CANCELED: Reason=\(evt.reason)")
-        
+
         if evt.reason == SPXCancellationReason.error {
             print("CANCELED: ErrorCode=\(evt.errorCode)\nCANCELED: ErrorDetails=\(evt.errorDetails ?? "n/a")")
         }
@@ -143,7 +248,7 @@ class SpeechTranslator {
     
     func startTranslating() {
         _audioEngine.start()
-        
+
         do {
             try _recognizer.startContinuousRecognition()
         } catch {
@@ -158,15 +263,17 @@ class SpeechTranslator {
         } catch {
             print(error.localizedDescription)
         }
-        
+
         _audioEngine.stop()
     }
     
-    init() {
-        _sub = "0d3c308c3e4146bf9d03d04a46984922"
-        _region = "centralus"
+    init(config: CPCTranslator2Configuration, apiClient: ApiClient) {
+        _configuration = config
+        _apiClient = apiClient
         
-        _translationConfig = try! SPXSpeechTranslationConfiguration(subscription: _sub, region: _region)
+        _publishingQueue = DispatchQueue(label: "publishingQueue")
+        
+        _translationConfig = try! SPXSpeechTranslationConfiguration(subscription: _configuration.subscription, region: _configuration.region)
         _translationConfig.speechRecognitionLanguage = "en-US"
         
         _pushStream = SPXPushAudioInputStream()
@@ -183,18 +290,26 @@ class SpeechTranslator {
         _recognizer.addCanceledEventHandler(handleCanceled)
     }
 }
+  
+let configManager = ConfigurationManager()
+let config = configManager.loadConfiguration()
 
-
-//var outfile = try! AVAudioFile(forWriting: URL(fileURLWithPath: "/Users/nfm/recording.caf"), settings: inputFormat.settings, commonFormat: inputFormat.commonFormat, interleaved: false)
-
-
-
-let translator = SpeechTranslator()
-
-print("Starting translation...")
-
-translator.startTranslating()
-
-let _ = readLine()
-
-translator.stopTranslating()
+if config.useTestOutput {
+    while true {
+        let time = Date()
+        print("TRANSLATED: this is a test message sent at \(time)")
+        sleep(3)
+    }
+}
+else {
+    let client = ApiClient(config: config)
+    let translator = SpeechTranslator(config: config, apiClient: client)
+    
+    print("Starting translation...")
+    
+    translator.startTranslating()
+    
+    let _ = readLine()
+    
+    translator.stopTranslating()
+}

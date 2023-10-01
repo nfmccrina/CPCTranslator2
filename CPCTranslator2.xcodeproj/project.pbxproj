@@ -261,6 +261,9 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = K4BKMXSQ76;
 				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Need microphone access to record audio which will be translated.";
+				LD_RUNPATH_SEARCH_PATHS = .;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 			};
@@ -273,6 +276,9 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = K4BKMXSQ76;
 				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Need microphone access to record audio which will be translated.";
+				LD_RUNPATH_SEARCH_PATHS = .;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 			};
